@@ -1,0 +1,77 @@
+name: Build patched image
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Install protoc
+        run: |
+          PROTOC_VERSION=28.3
+          curl -sLO https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip
+          unzip -o protoc-${PROTOC_VERSION}-linux-x86_64.zip -d /usr/local
+          protoc --version
+
+      - name: Install Go protoc plugins
+        run: |
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@1958fcbe2ca8bd93af633f11e97d44e567e945af
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.34.2
+
+      - name: Generate proto files
+        run: |
+          mkdir -p pkg/grpc/proto
+          protoc --experimental_allow_proto3_optional -Ibackend/ \
+            --go_out=pkg/grpc/proto/ --go_opt=paths=source_relative \
+            --go-grpc_out=pkg/grpc/proto/ --go-grpc_opt=paths=source_relative \
+            backend/backend.proto
+
+      - name: Stub react-ui dist
+        run: |
+          mkdir -p core/http/react-ui/dist
+          echo '<!doctype html><html><body>stub</body></html>' > core/http/react-ui/dist/index.html
+
+      - name: Build Go binary
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -ldflags "-s -w" -o local-ai ./cmd/local-ai
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push overlay image
+        run: |
+          cat > Dockerfile.patch <<'EOF'
+          FROM quay.io/go-skynet/local-ai:v3.12.1-gpu-nvidia-cuda-12
+          COPY local-ai /local-ai
+          EOF
+          docker build -f Dockerfile.patch -t ghcr.io/${{ github.repository_owner }}/localai:patched .
+          docker push ghcr.io/${{ github.repository_owner }}/localai:patched
