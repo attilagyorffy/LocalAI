@@ -72,6 +72,7 @@ jobs:
           cat > Dockerfile.patch <<'EOF'
           FROM quay.io/go-skynet/local-ai:v3.12.1-gpu-nvidia-cuda-12
           COPY local-ai /local-ai
+          COPY backend/python/diffusers/backend.py /backends/cuda12-diffusers/backend.py
           EOF
           docker build -f Dockerfile.patch -t ghcr.io/${{ github.repository_owner }}/localai:patched .
           docker push ghcr.io/${{ github.repository_owner }}/localai:patched
